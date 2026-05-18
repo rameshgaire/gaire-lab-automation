@@ -1,35 +1,50 @@
 import requests
 from datetime import datetime
 
-# ADD MORE TARGETS — check your whole environment at once
+# gaire.lab — verified IPs May 2026
+# Run from: Mac (home network) or SYD-VM01 via n8n
 targets = [
-    "https://google.com",
-    "https://github.com",
-    "http://SYD-HV01-IP",     # your lab — replace with real IP
-    "http://SYD-HV02-IP",     # your lab — replace with real IP
+    # Internet connectivity check
+    ("Internet - Google",   "https://google.com"),
+    ("Internet - GitHub",   "https://github.com"),
+    # Domain controllers (pinned to hypervisor hosts)
+    ("SYD-DC01",            "http://10.10.10.10"),
+    ("SYD-DC02",            "http://10.10.10.11"),
+    # Cluster VMs
+    ("SYD-VM01",            "http://10.10.10.12"),
+    ("SYD-SQL01",           "http://10.10.10.15"),
+    ("SYD-RDS01",           "http://10.10.10.21"),
+    # Hypervisor hosts
+    ("SYD-HV01",            "http://10.10.10.50"),
+    ("SYD-HV02",            "http://10.10.10.51"),
+    # Storage
+    ("SYD-STOR01",          "http://10.10.10.60"),
+    # Docker services on SYD-VM01
+    ("Portainer",           "https://10.10.10.12:9443"),
+    ("n8n",                 "http://10.10.10.12:5678"),
+    ("Ollama",              "http://10.10.10.12:11434"),
+    ("Open WebUI",          "http://10.10.10.12:3000"),
 ]
 
-# LOG FILE — results saved to disk, not just printed
 log_file = "health_log.txt"
 
-def check_site(url):
+def check_site(name, url):
     try:
-        response = requests.get(url, timeout=5)
+        response = requests.get(url, timeout=5, verify=False)
         if response.status_code == 200:
-            return f"[OK]      {url}"
+            return f"[OK]      {name:<20} {url}"
         else:
-            return f"[WARN]    {url} — status {response.status_code}"
+            return f"[WARN]    {name:<20} {url} — status {response.status_code}"
     except Exception as e:
-        return f"[ALERT]   {url} — UNREACHABLE. {e}"
+        return f"[ALERT]   {name:<20} {url} — UNREACHABLE"
 
-# RUN ALL CHECKS
 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 print(f"\n=== Health Check — {timestamp} ===")
 
 with open(log_file, "a") as log:
     log.write(f"\n=== {timestamp} ===\n")
-    for target in targets:
-        result = check_site(target)
+    for name, url in targets:
+        result = check_site(name, url)
         print(result)
         log.write(result + "\n")
 
