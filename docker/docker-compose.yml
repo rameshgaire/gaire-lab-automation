@@ -1,0 +1,61 @@
+version: "3.8"
+
+# gaire.lab - SYD-VM01 Docker Stack
+# Last updated: May 2026
+# Host: 10.10.10.12 / Tailscale: 100.69.145.33
+
+services:
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: always
+    ports:
+      - "9443:9443"
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
+  n8n:
+    image: n8nio/n8n
+    container_name: n8n
+    restart: always
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_HOST=10.10.10.12
+      - WEBHOOK_URL=http://10.10.10.12:5678
+      - GENERIC_TIMEZONE=Australia/Sydney
+      - TZ=Australia/Sydney
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    restart: always
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.6.5
+    container_name: open-webui
+    restart: always
+    ports:
+      - "3000:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - HF_HUB_CACHE=/app/backend/data/cache/hub
+    volumes:
+      - open-webui_data:/app/backend/data
+
+volumes:
+  portainer_data:
+  n8n_data:
+  ollama_data:
+  open-webui_data:
