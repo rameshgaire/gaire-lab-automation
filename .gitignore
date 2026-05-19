@@ -1,3 +1,8 @@
 health_log.txt
 *.log
 .env
+terraform/*.tfvars
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
