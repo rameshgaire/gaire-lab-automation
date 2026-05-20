@@ -1,5 +1,10 @@
 # .gitignore
 
+# Log files and local application environments
+health_log.txt
+*.log
+.env
+
 # Ignore local secret variable overrides everywhere
 **/*.tfvars
 **/terraform.tfvars
