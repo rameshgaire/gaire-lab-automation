@@ -38,3 +38,9 @@ variable "vm_size" {
   type        = string
   default     = "Standard_B2ats_v2" # 💸 100% Free Tier Eligible AMD SKU
 }
+
+variable "alert_email" {
+  description = "Email address for budget and monitoring alerts"
+  type        = string
+  default     = "rameshgaire7@gmail.com"
+}

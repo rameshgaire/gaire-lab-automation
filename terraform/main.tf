@@ -148,3 +148,46 @@ resource "azurerm_linux_virtual_machine" "lab" {
     managed_by  = "terraform"
   }
 }
+
+# Budget alert — get notified if spending exceeds $5/month
+# Requires the Consumption API to be registered on your subscription
+
+resource "azurerm_consumption_budget_subscription" "lab" {
+  name            = "gaire-lab-budget"
+  subscription_id = "/subscriptions/07772dcd-859f-4210-a3a7-fcb0317f50b6"
+
+  amount     = 5
+  time_grain = "Monthly"
+
+  time_period {
+    start_date = "2026-05-01T00:00:00Z"
+    end_date   = "2027-05-01T00:00:00Z"
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 80.0
+    operator       = "GreaterThan"
+    threshold_type = "Actual"
+
+    contact_emails = [var.alert_email]
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 100.0
+    operator       = "GreaterThan"
+    threshold_type = "Actual"
+
+    contact_emails = [var.alert_email]
+  }
+
+  notification {
+    enabled        = true
+    threshold      = 100.0
+    operator       = "GreaterThan"
+    threshold_type = "Forecasted"
+
+    contact_emails = [var.alert_email]
+  }
+}
