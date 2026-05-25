@@ -1,0 +1,243 @@
+# base-setup.yml
+# Configures any blank Ubuntu server to gaire.lab standard
+# Run with: ansible-playbook playbooks/base-setup.yml
+
+- name: Base server configuration
+  hosts: "{{ target | default('azure_lab_vm') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    timezone: "Australia/Sydney"
+    packages:
+      - curl
+      - wget
+      - git
+      - htop
+      - net-tools
+      - unzip
+      - python3-pip
+
+  tasks:
+
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+
+    - name: Install base packages
+      apt:
+        name: "{{ packages }}"
+        state: present
+
+    - name: Set timezone
+      timezone:
+        name: "{{ timezone }}"
+
+    - name: Create ops user for automation
+      user:
+        name: ops
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Configure passwordless sudo for ops user
+      copy:
+        content: "ops ALL=(ALL) NOPASSWD:ALL"
+        dest: /etc/sudoers.d/ops
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Add SSH key to ops user
+      authorized_key:
+        user: ops
+        state: present
+        key: "{{ lookup('file', '~/.ssh/azure-lab-public-key.pub') }}"
+
+    - name: Disable root SSH login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+      notify: Restart SSH
+
+    - name: Set SSH idle timeout to 15 minutes
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^ClientAliveInterval'
+        line: 'ClientAliveInterval 900'
+        state: present
+      notify: Restart SSH
+
+    - name: Allow SSH through firewall (Pre-check)
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Allow HTTP through firewall
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+
+    - name: Allow HTTPS through firewall
+      ufw:
+        rule: allow
+        port: '443'
+        proto: tcp
+
+    - name: Enable UFW firewall safely
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Configure automatic security updates
+      apt:
+        name: unattended-upgrades
+        state: present
+
+    - name: Print completion message
+      debug:
+        msg: "Base setup complete on {{ inventory_hostname }} at {{ ansible_date_time.iso8601 }}"
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted
+rameshgaire7@gaire-control-node:~$ cat ~/ansible/ansible.cfg
+[defaults]
+inventory = inventory/hosts.yml
+host_key_checking = False
+retry_files_enabled = False
+stdout_callback = yaml
+timeout = 30
+
+[ssh_connection]
+ssh_args = -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+pipelining = True
+rameshgaire7@gaire-control-node:~$ cat ~/ansible/playbooks/base-setup.yml
+---
+# base-setup.yml
+# Configures any blank Ubuntu server to gaire.lab standard
+# Run with: ansible-playbook playbooks/base-setup.yml
+
+- name: Base server configuration
+  hosts: "{{ target | default('azure_lab_vm') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    timezone: "Australia/Sydney"
+    packages:
+      - curl
+      - wget
+      - git
+      - htop
+      - net-tools
+      - unzip
+      - python3-pip
+
+  tasks:
+
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+
+    - name: Install base packages
+      apt:
+        name: "{{ packages }}"
+        state: present
+
+    - name: Set timezone
+      timezone:
+        name: "{{ timezone }}"
+
+    - name: Create ops user for automation
+      user:
+        name: ops
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Configure passwordless sudo for ops user
+      copy:
+        content: "ops ALL=(ALL) NOPASSWD:ALL"
+        dest: /etc/sudoers.d/ops
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Add SSH key to ops user
+      authorized_key:
+        user: ops
+        state: present
+        key: "{{ lookup('file', '~/.ssh/azure-lab-public-key.pub') }}"
+
+    - name: Disable root SSH login
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        line: 'PermitRootLogin no'
+        state: present
+      notify: Restart SSH
+
+    - name: Set SSH idle timeout to 15 minutes
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^ClientAliveInterval'
+        line: 'ClientAliveInterval 900'
+        state: present
+      notify: Restart SSH
+
+    - name: Allow SSH through firewall (Pre-check)
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+
+    - name: Allow HTTP through firewall
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+
+    - name: Allow HTTPS through firewall
+      ufw:
+        rule: allow
+        port: '443'
+        proto: tcp
+
+    - name: Enable UFW firewall safely
+      ufw:
+        state: enabled
+        policy: deny
+
+    - name: Configure automatic security updates
+      apt:
+        name: unattended-upgrades
+        state: present
+
+    - name: Print completion message
+      debug:
+        msg: "Base setup complete on {{ inventory_hostname }} at {{ ansible_date_time.iso8601 }}"
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted

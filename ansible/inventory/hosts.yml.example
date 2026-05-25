@@ -1,0 +1,26 @@
+# Create hosts.yml.example with placeholder content
+@"
+all:
+  children:
+    azure:
+      hosts:
+        azure_lab_vm:
+          ansible_host: YOUR_AZURE_VM_IP
+          ansible_user: lab.admin
+          ansible_ssh_private_key_file: ~/.ssh/azure-lab-private-key
+          ansible_become: true
+          ansible_become_method: sudo
+          ansible_become_password: "YOUR_PASSWORD"
+    homelab:
+      hosts:
+        syd_vm01:
+          ansible_host: YOUR_TAILSCALE_IP
+          ansible_user: lab.admin
+          ansible_ssh_private_key_file: ~/.ssh/azure-lab-private-key
+          ansible_become: true
+          ansible_become_method: sudo
+    gcp:
+      hosts:
+        localhost:
+          ansible_connection: local
+"@ | Out-File -FilePath "C:\Tools\Azure Lab\gaire-lab-automation\ansible\inventory\hosts.yml.example" -Encoding UTF8

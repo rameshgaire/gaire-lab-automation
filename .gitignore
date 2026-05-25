@@ -16,3 +16,5 @@ health_log.txt
 # Ignore compiled binary provider plugins and locks
 **/.terraform/
 **/.terraform.lock.hcl
+ansible/inventory/hosts.yml
+ansible/*.retry
