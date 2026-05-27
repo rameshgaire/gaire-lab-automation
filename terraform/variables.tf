@@ -44,3 +44,8 @@ variable "alert_email" {
   type        = string
   default     = "rameshgaire7@gmail.com"
 }
+
+variable "ssh_public_key" {
+  description = "SSH public key injected into VMs at creation time"
+  type        = string
+}

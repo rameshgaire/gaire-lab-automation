@@ -1,20 +1,10 @@
-# .gitignore
-
-# Log files and local application environments
-health_log.txt
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+.terraform.lock.hcl
 *.log
-.env
-
-# Ignore local secret variable overrides everywhere
-**/*.tfvars
-**/terraform.tfvars
-
-# Ignore local state file records globally
-**/*.tfstate
-**/*.tfstate.backup
-
-# Ignore compiled binary provider plugins and locks
-**/.terraform/
-**/.terraform.lock.hcl
-ansible/inventory/hosts.yml
-ansible/*.retry
+*.pem
+*.key
+id_rsa
