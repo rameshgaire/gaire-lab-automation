@@ -1,0 +1,213 @@
+---
+# deploy-stack.yml
+# Installs Docker, configures 4GB Swap, and deploys the gaire.lab container stack
+# Run with: ansible-playbook playbooks/deploy-stack.yml -l azure_lab_vm
+
+- name: Deploy gaire.lab Docker stack
+  hosts: "{{ target | default('azure_lab_vm') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    docker_packages:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    stack_user: lab.admin
+    n8n_host: "{{ ansible_host }}"
+    ollama_model: phi3
+
+  tasks:
+
+    # ── Pre-flight: Swap Space Configuration ────────────────────────
+    - name: Check if swapfile already exists
+      stat:
+        path: /swapfile
+      register: swapfile_check
+
+    - name: Allocate memory space for swapfile
+      command: fallocate -l 4G /swapfile
+      when: not swapfile_check.stat.exists
+
+    - name: Set secure permissions on swapfile
+      file:
+        path: /swapfile
+        mode: '0600'
+        owner: root
+        group: root
+      when: not swapfile_check.stat.exists
+
+    - name: Format the swapfile system
+      command: mkswap /swapfile
+      when: not swapfile_check.stat.exists
+
+    - name: Enable the swap file allocation live
+      command: swapon /swapfile
+      when: not swapfile_check.stat.exists
+      register: swapon_result
+      failed_when: 
+        - swapon_result.rc != 0 
+        - "'file already in use' not in swapon_result.stderr"
+
+    - name: Ensure swapfile mounts persistently on reboot
+      mount:
+        name: none
+        src: /swapfile
+        fstype: swap
+        opts: sw
+        state: present
+
+    # ── Docker Installation & Host Dependencies ──────────────────────
+    - name: Install Docker and Python ecosystem dependencies
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-docker
+        state: present
+        update_cache: yes
+
+    - name: Create Docker GPG key directory
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Download Docker GPG key
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Add Docker repository
+      shell: |
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+      args:
+        creates: /etc/apt/sources.list.d/docker.list
+
+    - name: Install Docker engine
+      apt:
+        name: "{{ docker_packages }}"
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add stack user to docker group
+      user:
+        name: "{{ stack_user }}"
+        groups: docker
+        append: yes
+
+    # ── Firewall Port Configuration ──────────────────────────────────
+    - name: Allow stack ports through firewall
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ['9443', '5678', '11434', '3000']
+
+    # ── Storage Layer: Docker Volumes ────────────────────────────────
+    - name: Create Docker volumes
+      community.docker.docker_volume:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - portainer_data
+        - n8n_data
+        - ollama_data
+        - open-webui_data
+
+    # ── Orchestration Layer: Container Deployments ───────────────────
+    - name: Deploy Portainer
+      community.docker.docker_container:
+        name: portainer
+        image: portainer/portainer-ce:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "9443:9443"
+          - "8000:8000"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+          - portainer_data:/data
+
+    - name: Deploy n8n
+      community.docker.docker_container:
+        name: n8n
+        image: n8nio/n8n
+        state: started
+        restart_policy: always
+        ports:
+          - "5678:5678"
+        env:
+          N8N_HOST: "{{ n8n_host }}"
+          WEBHOOK_URL: "http://{{ n8n_host }}:5678"
+          GENERIC_TIMEZONE: "Australia/Sydney"
+          TZ: "Australia/Sydney"
+          N8N_SECURE_COOKIE: "false"
+        volumes:
+          - n8n_data:/home/node/.n8n
+
+    - name: Deploy Ollama
+      community.docker.docker_container:
+        name: ollama
+        image: ollama/ollama
+        state: started
+        restart_policy: always
+        ports:
+          - "11434:11434"
+        volumes:
+          - ollama_data:/root/.ollama
+
+    - name: Deploy Open WebUI
+      community.docker.docker_container:
+        name: open-webui
+        image: ghcr.io/open-webui/open-webui:v0.6.5
+        state: started
+        restart_policy: always
+        ports:
+          - "3000:8080"
+        env:
+          OLLAMA_BASE_URL: "http://{{ ansible_host }}:11434"
+          HF_HUB_CACHE: "/app/backend/data/cache/hub"
+        volumes:
+          - open-webui_data:/app/backend/data
+        etc_hosts:
+          host.docker.internal: "{{ ansible_default_ipv4.address }}"
+
+    # ── Weights Layer: Model Verification ────────────────────────────
+    - name: Wait for Ollama API loopback availability
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 11434
+        delay: 10
+        timeout: 60
+
+    - name: Pull model manifest into local volume space
+      shell: docker exec ollama ollama pull {{ ollama_model }}
+      register: model_pull
+      changed_when: "'success' in model_pull.stdout"
+
+    # ── Post-Deployment Validation ───────────────────────────────────
+    - name: Verify run runtime state metrics
+      shell: docker ps --format "{{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}"
+      register: container_status
+      changed_when: false
+
+    - name: Print infrastructure endpoint layout
+      debug:
+        msg:
+          - "====== Deployment Complete ======"
+          - "{{ container_status.stdout_lines }}"
+          - "================================="
+          - "Portainer:   https://{{ ansible_host }}:9443"
+          - "n8n:          http://{{ ansible_host }}:5678"
+          - "Open WebUI:   http://{{ ansible_host }}:3000"
