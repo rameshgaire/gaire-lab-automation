@@ -180,6 +180,7 @@ resource "azurerm_linux_virtual_machine" "lab" {
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
+    disk_size_gb         = 64
   }
 
   # Ubuntu 22.04 LTS — same as your SYD-VM01
@@ -236,5 +237,61 @@ resource "azurerm_consumption_budget_subscription" "lab" {
     threshold_type = "Forecasted"
 
     contact_emails = [var.alert_email]
+  }
+}
+
+# Monitor disk usage and CPU — alert when disk hits 85%
+resource "azurerm_monitor_metric_alert" "disk_alert" {
+  name                = "gaire-lab-disk-alert"
+  resource_group_name = azurerm_resource_group.lab.name
+  scopes              = [azurerm_linux_virtual_machine.lab.id]
+  description         = "Alert when OS disk usage exceeds 85%"
+  severity            = 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"
+
+  criteria {
+    metric_namespace = "Microsoft.Compute/virtualMachines"
+    metric_name      = "OS Disk Used Bytes Percentage"
+    aggregation      = "Average"
+    operator         = "GreaterThan"
+    threshold        = 85
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.lab.id
+  }
+}
+
+resource "azurerm_monitor_metric_alert" "memory_alert" {
+  name                = "gaire-lab-memory-alert"
+  resource_group_name = azurerm_resource_group.lab.name
+  scopes              = [azurerm_linux_virtual_machine.lab.id]
+  description         = "Alert when available memory drops below 500MB"
+  severity            = 2
+  frequency           = "PT5M"
+  window_size         = "PT15M"
+
+  criteria {
+    metric_namespace = "Microsoft.Compute/virtualMachines"
+    metric_name      = "Available Memory Bytes"
+    aggregation      = "Average"
+    operator         = "LessThan"
+    threshold        = 524288000
+  }
+
+  action {
+    action_group_id = azurerm_monitor_action_group.lab.id
+  }
+}
+
+resource "azurerm_monitor_action_group" "lab" {
+  name                = "gaire-lab-alerts"
+  resource_group_name = azurerm_resource_group.lab.name
+  short_name          = "gairelab"
+
+  email_receiver {
+    name          = "ramesh"
+    email_address = var.alert_email
   }
 }
