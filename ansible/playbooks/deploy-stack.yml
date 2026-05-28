@@ -1,6 +1,6 @@
 ---
 # deploy-stack.yml
-# Installs Docker, configures 4GB Swap, and deploys the gaire.lab container stack
+# Installs Docker, configures 4GB Swap, and deploys the gaire.lab container stack behind a secure Caddy TLS proxy
 # Run with: ansible-playbook playbooks/deploy-stack.yml -l azure_lab_vm
 
 - name: Deploy gaire.lab Docker stack
@@ -15,8 +15,9 @@
       - containerd.io
       - docker-compose-plugin
     stack_user: lab.admin
-    n8n_host: "{{ ansible_host }}"
     ollama_model: phi3
+    # CHANGE THIS to your exact registered DuckDNS subdomain prefix
+    duckdns_prefix: "gairelab"
 
   tasks:
 
@@ -106,13 +107,13 @@
         groups: docker
         append: yes
 
-    # ── Firewall Port Configuration ──────────────────────────────────
-    - name: Allow stack ports through firewall
+    # ── Firewall Web Configuration ──────────────────────────────────
+    - name: Allow web traffic proxy ports through firewall
       ufw:
         rule: allow
         port: "{{ item }}"
         proto: tcp
-      loop: ['9443', '5678', '11434', '3000']
+      loop: ['80', '443']
 
     # ── Storage Layer: Docker Volumes ────────────────────────────────
     - name: Create Docker volumes
@@ -124,6 +125,13 @@
         - n8n_data
         - ollama_data
         - open-webui_data
+        - caddy_data
+        - caddy_config
+
+    - name: Create dedicated internal Docker network
+      community.docker.docker_network:
+        name: lab_secure_net
+        state: present
 
     # ── Orchestration Layer: Container Deployments ───────────────────
     - name: Deploy Portainer
@@ -132,9 +140,8 @@
         image: portainer/portainer-ce:latest
         state: started
         restart_policy: always
-        ports:
-          - "9443:9443"
-          - "8000:8000"
+        networks:
+          - name: lab_secure_net
         volumes:
           - /var/run/docker.sock:/var/run/docker.sock
           - portainer_data:/data
@@ -142,54 +149,89 @@
     - name: Deploy n8n
       community.docker.docker_container:
         name: n8n
-        image: n8nio/n8n
+        image: n8nio/n8n:latest
         state: started
         restart_policy: always
-        ports:
-          - "5678:5678"
+        networks:
+          - name: lab_secure_net
         env:
-          N8N_HOST: "{{ n8n_host }}"
-          WEBHOOK_URL: "http://{{ n8n_host }}:5678"
+          N8N_HOST: "n8n.{{ duckdns_prefix }}.duckdns.org"
+          WEBHOOK_URL: "https://n8n.{{ duckdns_prefix }}.duckdns.org"
           GENERIC_TIMEZONE: "Australia/Sydney"
           TZ: "Australia/Sydney"
-          N8N_SECURE_COOKIE: "false"
         volumes:
           - n8n_data:/home/node/.n8n
 
     - name: Deploy Ollama
       community.docker.docker_container:
         name: ollama
-        image: ollama/ollama
+        image: ollama/ollama:latest
         state: started
         restart_policy: always
-        ports:
-          - "11434:11434"
+        networks:
+          - name: lab_secure_net
         volumes:
           - ollama_data:/root/.ollama
 
     - name: Deploy Open WebUI
       community.docker.docker_container:
         name: open-webui
-        image: ghcr.io/open-webui/open-webui:v0.6.5
+        image: ghcr.io/open-webui/open-webui:main
         state: started
         restart_policy: always
-        ports:
-          - "3000:8080"
-        env:
-          OLLAMA_BASE_URL: "http://{{ ansible_host }}:11434"
-          HF_HUB_CACHE: "/app/backend/data/cache/hub"
+        networks:
+          - name: lab_secure_net
         volumes:
           - open-webui_data:/app/backend/data
-        etc_hosts:
-          host.docker.internal: "{{ ansible_default_ipv4.address }}"
+        env:
+          OLLAMA_BASE_URL: "http://ollama:11434"
+          HF_HUB_CACHE: "/app/backend/data/cache/hub"
+
+    # ── Reverse Proxy Layer: Caddy Configurations ────────────────────
+    - name: Ensure Caddy configuration directory exists
+      ansible.builtin.file:
+        path: /etc/caddy
+        state: directory
+        mode: '0755'
+
+    - name: Generate Caddy Routing Layout (Caddyfile)
+      ansible.builtin.copy:
+        dest: /etc/caddy/Caddyfile
+        mode: '0644'
+        content: |
+          n8n.{{ duckdns_prefix }}.duckdns.org {
+              reverse_proxy n8n:5678
+          }
+
+          chat.{{ duckdns_prefix }}.duckdns.org {
+              reverse_proxy open-webui:8080
+          }
+
+          portainer.{{ duckdns_prefix }}.duckdns.org {
+              reverse_proxy portainer:9000
+          }
+
+    - name: Deploy Caddy SSL Edge Routing Proxy
+      community.docker.docker_container:
+        name: caddy
+        image: caddy:latest
+        state: started
+        restart_policy: always
+        networks:
+          - name: lab_secure_net
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - /etc/caddy/Caddyfile:/etc/caddy/Caddyfile
+          - caddy_data:/data
+          - caddy_config:/config
 
     # ── Weights Layer: Model Verification ────────────────────────────
-    - name: Wait for Ollama API loopback availability
-      wait_for:
-        host: "{{ ansible_host }}"
-        port: 11434
-        delay: 10
-        timeout: 60
+    - name: Wait for Ollama container initialization
+      timeout: 10
+      ansible.builtin.pause:
+        seconds: 10
 
     - name: Pull model manifest into local volume space
       shell: docker exec ollama ollama pull {{ ollama_model }}
@@ -205,9 +247,9 @@
     - name: Print infrastructure endpoint layout
       debug:
         msg:
-          - "====== Deployment Complete ======"
+          - "====== Hardened Deployment Complete ======"
           - "{{ container_status.stdout_lines }}"
-          - "================================="
-          - "Portainer:   https://{{ ansible_host }}:9443"
-          - "n8n:          http://{{ ansible_host }}:5678"
-          - "Open WebUI:   http://{{ ansible_host }}:3000"
+          - "=========================================="
+          - "Portainer:   https://portainer.{{ duckdns_prefix }}.duckdns.org"
+          - "n8n:         https://n8n.{{ duckdns_prefix }}.duckdns.org"
+          - "Open WebUI:  https://chat.{{ duckdns_prefix }}.duckdns.org"
