@@ -190,7 +190,7 @@
     # ── Reverse Proxy Layer: DuckDNS & Caddy Configurations ──────────
     - name: Automatically update DuckDNS with the new Azure Public IP
       ansible.builtin.uri:
-        url: "https://www.duckdns.org/update?domains={{ duckdns_prefix }}&token=02761602-4c41-4440-b235-8a2cb1b4f08f&ip={{ ansible_host }}"
+        url: "https://www.duckdns.org/update?domains={{ duckdns_prefix }}&token={{ vault_duckdns_token }}&ip={{ ansible_host }}"
         return_content: yes
       register: duckdns_update
       failed_when: "'OK' not in duckdns_update.content"
