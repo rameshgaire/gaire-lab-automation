@@ -8,6 +8,9 @@
   become: true
   gather_facts: true
 
+  vars_files:
+    - vars/secrets.yml  # <-- ADD THIS LINE HERE
+
   vars:
     docker_packages:
       - docker-ce
