@@ -187,7 +187,14 @@
           OLLAMA_BASE_URL: "http://ollama:11434"
           HF_HUB_CACHE: "/app/backend/data/cache/hub"
 
-    # ── Reverse Proxy Layer: Caddy Configurations ────────────────────
+    # ── Reverse Proxy Layer: DuckDNS & Caddy Configurations ──────────
+    - name: Automatically update DuckDNS with the new Azure Public IP
+      ansible.builtin.uri:
+        url: "https://www.duckdns.org/update?domains={{ duckdns_prefix }}&token=02761602-4c41-4440-b235-8a2cb1b4f08f&ip={{ ansible_host }}"
+        return_content: yes
+      register: duckdns_update
+      failed_when: "'OK' not in duckdns_update.content"
+
     - name: Ensure Caddy configuration directory exists
       ansible.builtin.file:
         path: /etc/caddy
@@ -208,7 +215,11 @@
           }
 
           portainer.{{ duckdns_prefix }}.duckdns.org {
-              reverse_proxy portainer:9000
+              reverse_proxy portainer:9443 {
+                  transport http {
+                      tls_insecure_skip_verify
+                  }
+              }
           }
 
     - name: Deploy Caddy SSL Edge Routing Proxy
