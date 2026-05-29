@@ -8,3 +8,5 @@
 *.pem
 *.key
 id_rsa
+
+ansible/playbooks/vars/secrets.yml
