@@ -70,7 +70,7 @@ resource "azurerm_public_ip" "lab" {
 }
 
 # Network Security Group — Azure's firewall rules
-# Equivalent to your SonicWall access rules but for this VM only
+# Hardened to only permit core administration and proxy traffic
 resource "azurerm_network_security_group" "lab" {
   name                = "gaire-lab-nsg"
   location            = azurerm_resource_group.lab.location
@@ -89,49 +89,25 @@ resource "azurerm_network_security_group" "lab" {
   }
 
   security_rule {
-    name                       = "Allow-Portainer"
+    name                       = "Allow-HTTP"
     priority                   = 1002
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
-    destination_port_range     = "9443"
+    destination_port_range     = "80"
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
 
   security_rule {
-    name                       = "Allow-n8n"
+    name                       = "Allow-HTTPS"
     priority                   = 1003
     direction                  = "Inbound"
     access                     = "Allow"
     protocol                   = "Tcp"
     source_port_range          = "*"
-    destination_port_range     = "5678"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
-  }
-
-  security_rule {
-    name                       = "Allow-Ollama"
-    priority                   = 1004
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "11434"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
-  }
-
-  security_rule {
-    name                       = "Allow-OpenWebUI"
-    priority                   = 1005
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "3000"
+    destination_port_range     = "443"
     source_address_prefix      = "*"
     destination_address_prefix = "*"
   }
@@ -166,9 +142,13 @@ resource "azurerm_linux_virtual_machine" "lab" {
   name                = "gaire-lab-vm"
   resource_group_name = azurerm_resource_group.lab.name
   location            = azurerm_resource_group.lab.location
-  size                = var.vm_size  # 1 vCPU, 1GB RAM — free tier
+  size = var.vm_size  # B2als_v2 — 2 vCPU, 4GB RAM
   admin_username      = var.admin_username
   admin_password      = var.admin_password
+  admin_ssh_key {
+    username   = var.admin_username
+    public_key = var.ssh_public_key
+  }
 
   # Allow password auth — use SSH keys in production
   disable_password_authentication = false
@@ -199,7 +179,6 @@ resource "azurerm_linux_virtual_machine" "lab" {
 
 # Budget alert — get notified if spending exceeds $5/month
 # Requires the Consumption API to be registered on your subscription
-
 resource "azurerm_consumption_budget_subscription" "lab" {
   name            = "gaire-lab-budget"
   subscription_id = "/subscriptions/07772dcd-859f-4210-a3a7-fcb0317f50b6"
@@ -251,11 +230,12 @@ resource "azurerm_monitor_metric_alert" "disk_alert" {
   window_size         = "PT15M"
 
   criteria {
-    metric_namespace = "Microsoft.Compute/virtualMachines"
-    metric_name      = "OS Disk Used Bytes Percentage"
-    aggregation      = "Average"
-    operator         = "GreaterThan"
-    threshold        = 85
+    aggregation            = "Average"
+    metric_namespace       = "Microsoft.Compute/virtualMachines"
+    metric_name            = "Disk Write Bytes" # Changed to a valid host metric
+    operator               = "GreaterThan"
+    skip_metric_validation = false
+    threshold              = 107374182400       # Example: Triggers if writes exceed 100 GB in the window
   }
 
   action {

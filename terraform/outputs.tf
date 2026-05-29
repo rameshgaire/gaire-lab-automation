@@ -21,3 +21,8 @@ output "ssh_command" {
   description = "SSH command to connect to the VM"
   value       = "ssh ${var.admin_username}@${azurerm_public_ip.lab.ip_address}"
 }
+
+output "static_ip" {
+  description = "Static public IP — persists across VM rebuilds"
+  value       = azurerm_public_ip.lab.ip_address
+}
