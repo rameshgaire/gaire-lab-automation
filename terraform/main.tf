@@ -137,7 +137,7 @@ resource "azurerm_network_interface_security_group_association" "lab" {
   network_security_group_id = azurerm_network_security_group.lab.id
 }
 
-# The VM itself — Ubuntu 22.04, Standard_B1s (free tier eligible)
+# The VM itself — Ubuntu 22.04, Standard_B2als_v2 (2 vCPU, 4GB RAM)
 resource "azurerm_linux_virtual_machine" "lab" {
   name                = "gaire-lab-vm"
   resource_group_name = azurerm_resource_group.lab.name
