@@ -27,6 +27,11 @@ targets = [
     {"name": "n8n",                 "type": "http",  "host": "10.10.10.12",      "port": 5678},
     {"name": "Ollama",              "type": "http",  "host": "10.10.10.12",      "port": 11434},
     {"name": "Open WebUI",          "type": "http",  "host": "10.10.10.12",      "port": 3000},
+     # Public HTTPS endpoints via Caddy — monitored from outside
+    {"name": "n8n HTTPS",           "type": "http",  "host": "n8n.gairelab.duckdns.org",       "port": 443},
+    {"name": "Chat HTTPS",          "type": "http",  "host": "chat.gairelab.duckdns.org",      "port": 443},
+    {"name": "Portainer HTTPS",     "type": "http",  "host": "portainer.gairelab.duckdns.org", "port": 443},
+    {"name": "Ollama HTTPS",        "type": "http",  "host": "ollama.gairelab.duckdns.org",    "port": 443},
 ]
 
 log_file = "health_log.txt"
