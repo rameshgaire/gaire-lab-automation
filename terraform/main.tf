@@ -275,3 +275,118 @@ resource "azurerm_monitor_action_group" "lab" {
     email_address = var.alert_email
   }
 }
+
+# ==========================================
+# PHASE C: KUBERNETES LAB COMPUTE RESOURCES
+# ==========================================
+
+# 1. Network Interfaces for K3s Nodes
+resource "azurerm_network_interface" "k3s_master_nic" {
+  name                = "gaire-lab-k3s-master-nic"
+  location            = azurerm_resource_group.lab.location
+  resource_group_name = azurerm_resource_group.lab.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.lab.id # Fixed: Points directly to your managed subnet resource
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+resource "azurerm_network_interface" "k3s_worker_nic" {
+  name                = "gaire-lab-k3s-worker-nic"
+  location            = azurerm_resource_group.lab.location
+  resource_group_name = azurerm_resource_group.lab.name
+
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.lab.id # Fixed: Points directly to your managed subnet resource
+    private_ip_address_allocation = "Dynamic"
+  }
+}
+
+# 2. K3s Master Node (Control Plane)
+resource "azurerm_linux_virtual_machine" "k3s_master" {
+  name                = "gaire-lab-k3s-master"
+  resource_group_name = azurerm_resource_group.lab.name
+  location            = azurerm_resource_group.lab.location
+  size                = "Standard_B2als_v2" # Updated: Swapped to available AMD SKU (2 vCPU, 4GB RAM)
+  admin_username      = "ops"
+  network_interface_ids = [
+    azurerm_network_interface.k3s_master_nic.id,
+  ]
+
+  admin_ssh_key {
+    username   = "ops"
+    public_key = var.ssh_public_key # Cleaned up: Uses your existing public key variable
+  }
+
+  # Allow password auth for testing or initial setup if needed (consistent with your other VM)
+  disable_password_authentication = false
+  admin_password                  = var.admin_password
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+    disk_size_gb         = 30
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
+    version   = "latest"
+  }
+
+  tags = {
+    environment = var.environment
+    managed_by  = "terraform"
+  }
+}
+
+# 3. K3s Worker Node (Compute Agent)
+resource "azurerm_linux_virtual_machine" "k3s_worker" {
+  name                = "gaire-lab-k3s-worker"
+  resource_group_name = azurerm_resource_group.lab.name
+  location            = azurerm_resource_group.lab.location
+  size                = "Standard_B2als_v2" # Updated: Swapped to available AMD SKU (1 vCPU, 2GB RAM)
+  admin_username      = "ops"
+  network_interface_ids = [
+    azurerm_network_interface.k3s_worker_nic.id,
+  ]
+
+  admin_ssh_key {
+    username   = "ops"
+    public_key = var.ssh_public_key # Cleaned up: Uses your existing public key variable
+  }
+
+  disable_password_authentication = false
+  admin_password                  = var.admin_password
+
+  os_disk {
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+    disk_size_gb         = 30
+  }
+
+  source_image_reference {
+    publisher = "Canonical"
+    offer     = "0001-com-ubuntu-server-jammy"
+    sku       = "22_04-lts"
+    version   = "latest"
+  }
+
+  tags = {
+    environment = var.environment
+    managed_by  = "terraform"
+  }
+}
+
+# 4. Outputs to instantly grab IPs for Ansible
+output "k3s_master_private_ip" {
+  value = azurerm_network_interface.k3s_master_nic.ip_configuration[0].private_ip_address
+}
+
+output "k3s_worker_private_ip" {
+  value = azurerm_network_interface.k3s_worker_nic.ip_configuration[0].private_ip_address
+}

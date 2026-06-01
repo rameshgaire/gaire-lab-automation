@@ -236,7 +236,11 @@
               }
           }
 
+          # Swap out the old ollama block with this updated block:
           ollama.{{ duckdns_prefix }}.duckdns.org {
+              basic_auth {
+                  admin {{ ollama_admin_password | password_hash('bcrypt') }}
+              }
               reverse_proxy ollama:11434
           }
 

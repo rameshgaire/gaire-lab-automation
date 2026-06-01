@@ -1,0 +1,61 @@
+---
+# deploy-k3s.yml
+# Bootstraps a lightweight K3s cluster across private Azure instances
+# Run with: ansible-playbook playbooks/deploy-k3s.yml
+
+- name: Bootstrap K3s Master Node
+  hosts: k3s_master
+  become: true
+  gather_facts: true
+
+  tasks:
+    
+    - name: Allow K3s API Server traffic through UFW
+      ufw:
+        rule: allow
+        port: '6443'
+        proto: tcp
+        
+    - name: Check if K3s Master service is already active
+      systemd:
+        name: k3s
+      register: k3s_service_status
+      ignore_errors: yes
+
+    - name: Run K3s Master Installation Script
+      shell: curl -sfL https://get.k3s.io | sh -
+      when: k3s_service_status.status.ActiveState != 'active'
+
+    - name: Wait until cluster node-token file is populated
+      wait_for:
+        path: /var/lib/rancher/k3s/server/node-token
+        timeout: 30
+
+    - name: Fetch cluster registration token
+      slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: control_plane_token_encoded
+
+    - name: Expose Token to Playbook Inventory Scope
+      set_fact:
+        k3s_token: "{{ control_plane_token_encoded['content'] | b64decode | trim }}"
+
+- name: Joint K3s Worker Compute Agent
+  hosts: k3s_worker
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Check if K3s Agent service is already active
+      systemd:
+        name: k3s-agent
+      register: k3s_agent_status
+      ignore_errors: yes
+
+    - name: Join Worker Node to the Master Control Plane
+      shell: |
+        curl -sfL https://get.k3s.io | \
+        K3S_URL="https://{{ hostvars[groups['k3s_master'][0]]['ansible_host'] }}:6443" \
+        K3S_TOKEN="{{ hostvars[groups['k3s_master'][0]]['k3s_token'] }}" \
+        sh -
+      when: k3s_agent_status.status.ActiveState != 'active'
