@@ -1,287 +1,574 @@
 ---
+
 # deploy-stack.yml
+
 # Deploys full gaire.lab stack with Caddy HTTPS reverse proxy
+
 # Run: ansible-playbook playbooks/deploy-stack.yml
 
+
+
 - name: Install Base Packages and Docker Engine
+
   hosts: "{{ target | default('azure_lab_vm') }}"
+
   become: true
+
   gather_facts: true
+
   vars_files:
+
     - vars/secrets.yml
+
   vars:
+
     docker_packages:
+
       - docker-ce
+
       - docker-ce-cli
+
       - containerd.io
+
       - docker-compose-plugin
+
       # Ensure python3-docker is installed here before container modules run
+
       - python3-docker 
 
+
+
   tasks:
+
     # ── Swap configuration ───────────────────────────────────────────
+
     - name: Check if swapfile exists
+
       stat:
+
         path: /swapfile
+
       register: swapfile_check
 
+
+
     - name: Create 4GB swapfile
+
       command: fallocate -l 4G /swapfile
+
       when: not swapfile_check.stat.exists
+
+
 
     - name: Set swapfile permissions
+
       file:
+
         path: /swapfile
+
         mode: '0600'
+
         owner: root
+
         group: root
+
       when: not swapfile_check.stat.exists
+
+
 
     - name: Format swapfile
+
       command: mkswap /swapfile
+
       when: not swapfile_check.stat.exists
+
+
 
     - name: Enable swapfile
+
       command: swapon /swapfile
+
       when: not swapfile_check.stat.exists
 
+
+
     - name: Make swapfile permanent
+
       mount:
+
         name: none
+
         src: /swapfile
+
         fstype: swap
+
         opts: sw
+
         state: present
+
+
 
     # ── Docker installation ──────────────────────────────────────────
+
     - name: Create Docker GPG key directory
+
       file:
+
         path: /etc/apt/keyrings
+
         state: directory
+
         mode: '0755'
+
+
 
     - name: Download Docker GPG key
+
       shell: |
+
         curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+
         gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+
       args:
+
         creates: /etc/apt/keyrings/docker.gpg
 
+
+
     - name: Add Docker repository
+
       shell: |
+
         echo "deb [arch=$(dpkg --print-architecture) \
+
         signed-by=/etc/apt/keyrings/docker.gpg] \
+
         https://download.docker.com/linux/ubuntu \
+
         $(lsb_release -cs) stable" | \
+
         tee /etc/apt/sources.list.d/docker.list > /dev/null
+
       args:
+
         creates: /etc/apt/sources.list.d/docker.list
 
+
+
     - name: Install Docker engine and Python SDK
+
       apt:
+
         name: "{{ docker_packages }}"
+
         state: present
+
         update_cache: yes
 
+
+
     - name: Start and enable Docker
+
       service:
+
         name: docker
+
         state: started
+
         enabled: yes
 
+
+
     - name: Add ops user to docker group
+
       user:
+
         name: "{{ ansible_user }}"
+
         groups: docker
+
         append: yes
 
+
+
 # PLAY 2: Orchestrate Containers (Runs cleanly using ops user permissions)
+
 - name: Deploy gaire.lab Container Services
+
   hosts: "{{ target | default('azure_lab_vm') }}"
+
   become: true
+
   gather_facts: false
+
   vars_files:
+
     - vars/secrets.yml
+
   vars:
+
     ollama_model: phi3
+
     duckdns_prefix: "gairelab"
 
+
+
   tasks:
+
     - name: Create Docker volumes
+
       community.docker.docker_volume:
+
         name: "{{ item }}"
+
         state: present
+
       loop:
+
         - portainer_data
+
         - n8n_data
+
         - ollama_data
+
         - open-webui_data
+
         - caddy_data
+
         - caddy_config
 
+
+
     - name: Create internal Docker network
+
       community.docker.docker_network:
+
         name: lab_secure_net
+
         state: present
 
+
+
     - name: Deploy Portainer
+
       community.docker.docker_container:
+
         name: portainer
+
         image: portainer/portainer-ce:latest
+
         state: started
+
         restart_policy: always
+
         networks:
+
           - name: lab_secure_net
+
         volumes:
+
           - /var/run/docker.sock:/var/run/docker.sock
+
           - portainer_data:/data
 
+
+
     - name: Deploy n8n
+
       community.docker.docker_container:
+
         name: n8n
+
         image: n8nio/n8n:latest
+
         state: started
+
         restart_policy: always
+
         networks:
+
           - name: lab_secure_net
+
         env:
+
           N8N_HOST: "n8n.{{ duckdns_prefix }}.duckdns.org"
+
           WEBHOOK_URL: "https://n8n.{{ duckdns_prefix }}.duckdns.org"
+
           GENERIC_TIMEZONE: "Australia/Sydney"
+
           TZ: "Australia/Sydney"
+
         volumes:
+
           - n8n_data:/home/node/.n8n
 
+
+
     - name: Deploy Ollama
+
       community.docker.docker_container:
+
         name: ollama
+
         image: ollama/ollama:latest
+
         state: started
+
         restart_policy: always
+
         networks:
+
           - name: lab_secure_net
+
         volumes:
+
           - ollama_data:/root/.ollama
 
+
+
     - name: Deploy Open WebUI
+
       community.docker.docker_container:
+
         name: open-webui
+
         image: ghcr.io/open-webui/open-webui:v0.6.5
+
         state: started
+
         restart_policy: always
+
         networks:
+
           - name: lab_secure_net
+
         volumes:
+
           - open-webui_data:/app/backend/data
+
         env:
+
           OLLAMA_BASE_URL: "http://ollama:11434"
+
           HF_HUB_CACHE: "/app/backend/data/cache/hub"
 
+
+
     # ── DuckDNS update ───────────────────────────────────────────────
+
     - name: Update DuckDNS with current VM IP
+
       uri:
+
         url: "https://www.duckdns.org/update?domains={{ duckdns_prefix }}&token={{ vault_duckdns_token }}"
+
         return_content: yes
+
       register: duckdns_result
+
       failed_when: "'OK' not in duckdns_result.content"
 
+
+
     - name: Create Caddy Dockerfile
+
       copy:
+
         dest: /tmp/Dockerfile.caddy
+
         content: |
+
           FROM caddy:2-builder AS builder
+
           RUN xcaddy build \
+
               --with github.com/caddy-dns/duckdns
+
           FROM caddy:2
+
           COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 
+
+
     - name: Build custom Caddy image with DuckDNS plugin
+
       community.docker.docker_image:
+
         name: caddy-duckdns
+
         build:
+
           path: /tmp
+
           dockerfile: Dockerfile.caddy
+
         source: build
+
         force_source: false
 
+
+
     - name: Create Caddy config directory
+
       file:
+
         path: /etc/caddy
+
         state: directory
+
         mode: '0755'
 
+
+
     - name: Write Caddyfile
+
       copy:
+
         dest: /etc/caddy/Caddyfile
+
         mode: '0644'
+
         content: |
+
           {
+
               email rameshgaire7@gmail.com
+
               acme_dns duckdns {{ vault_duckdns_token }}
+
           }
+
+
 
           n8n.{{ duckdns_prefix }}.duckdns.org {
+
               reverse_proxy n8n:5678
+
           }
+
+
 
           chat.{{ duckdns_prefix }}.duckdns.org {
+
               reverse_proxy open-webui:8080
+
           }
+
+
 
           portainer.{{ duckdns_prefix }}.duckdns.org {
+
               reverse_proxy portainer:9443 {
+
                   transport http {
+
                       tls_insecure_skip_verify
+
                   }
+
               }
+
           }
+
+
 
           # Swap out the old ollama block with this updated block:
+
           ollama.{{ duckdns_prefix }}.duckdns.org {
+
               basic_auth {
+
                   admin {{ ollama_admin_password | password_hash('bcrypt') }}
+
               }
+
               reverse_proxy ollama:11434
+
           }
 
+
+
     - name: Deploy Caddy reverse proxy
+
       community.docker.docker_container:
+
         name: caddy
+
         image: caddy-duckdns
+
         state: started
+
         restart_policy: always
+
         networks:
+
           - name: lab_secure_net
+
         ports:
+
           - "80:80"
+
           - "443:443"
+
           - "443:443/udp"
+
         volumes:
+
           - /etc/caddy:/etc/caddy:ro
+
           - caddy_data:/data
+
           - caddy_config:/config
 
+
+
     - name: Wait for Ollama to be ready
+
       pause:
+
         seconds: 15
 
+
+
     - name: Pull phi3 model asynchronously
+
       shell: docker exec ollama ollama pull {{ ollama_model }}
+
       async: 600
+
       poll: 10
 
+
+
     - name: Check all containers running
+
       shell: docker ps --format "{{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}"
+
       register: container_status
+
       changed_when: false
 
+
+
     - name: Print deployment summary
+
       debug:
+
         msg:
+
           - "====== Deployment Complete ======"
+
           - "{{ container_status.stdout_lines }}"
+
           - "================================="
+
           - "n8n:         https://n8n.{{ duckdns_prefix }}.duckdns.org"
+
           - "Open WebUI:   https://chat.{{ duckdns_prefix }}.duckdns.org"
+
           - "Portainer:   https://portainer.{{ duckdns_prefix }}.duckdns.org"
-          - "Ollama:      https://ollama.{{ duckdns_prefix }}.duckdns.org"
+
+          - "Ollama:      https://ollama.{{ duckdns_prefix }}.duckdns.org" 
+          

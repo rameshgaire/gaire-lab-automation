@@ -187,8 +187,8 @@ resource "azurerm_consumption_budget_subscription" "lab" {
   time_grain = "Monthly"
 
   time_period {
-    start_date = "2026-05-01T00:00:00Z"
-    end_date   = "2027-05-01T00:00:00Z"
+    start_date = "2026-06-01T00:00:00Z"
+    end_date   = "2027-06-01T00:00:00Z"
   }
 
   notification {
@@ -289,7 +289,8 @@ resource "azurerm_network_interface" "k3s_master_nic" {
   ip_configuration {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.lab.id # Fixed: Points directly to your managed subnet resource
-    private_ip_address_allocation = "Dynamic"
+    private_ip_address_allocation = "Static"    # <-- Changed from Dynamic
+    private_ip_address            = "10.0.1.5"   # <-- Anchored Master IP
   }
 }
 
@@ -301,7 +302,8 @@ resource "azurerm_network_interface" "k3s_worker_nic" {
   ip_configuration {
     name                          = "internal"
     subnet_id                     = azurerm_subnet.lab.id # Fixed: Points directly to your managed subnet resource
-    private_ip_address_allocation = "Dynamic"
+    private_ip_address_allocation = "Static"    # <-- Changed from Dynamic
+    private_ip_address            = "10.0.1.6"   # <-- Anchored Master IP
   }
 }
 
