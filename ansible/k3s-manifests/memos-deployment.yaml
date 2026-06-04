@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memos-deployment
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: memos
+  template:
+    metadata:
+      labels:
+        app: memos
+    spec:
+      containers:
+      - name: memos
+        image: neosmemo/memos:stable
+        ports:
+        - containerPort: 5230
+        volumeMounts:
+        - name: memos-data
+          mountPath: /var/opt/memos
+      volumes:
+      - name: memos-data
+        persistentVolumeClaim:
+          claimName: memos-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: memos-service
+  namespace: default
+spec:
+  selector:
+    app: memos
+  ports:
+  - protocol: TCP
+    port: 5230
+    targetPort: 5230
+  type: ClusterIP
