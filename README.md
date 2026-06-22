@@ -166,6 +166,31 @@ Confirm both nodes are Ready:
 
 bash    kubectl get nodes
 
+
+Phase 4.5 — Sync and Proxy Cluster Credentials (The Rebuild Twist)
+Because the K3s cluster lives completely isolated inside the private Azure VNet, your external control node cannot reach 10.0.1.5 directly to run cluster commands. We must fetch the credentials using a nested jump check and proxy our local kubectl traffic through an SSH SOCKS5 tunnel.
+
+Fetch the new token configuration from your control node using your local SSH key via the gateway:
+
+Bash
+ssh -i ~/.ssh/azure-lab-private-key -o ProxyCommand="ssh -i ~/.ssh/azure-lab-private-key -W %h:%p ops@<APPLICATION_VM_PUBLIC_IP>" ops@10.0.1.5 "sudo cat /etc/rancher/k3s/k3s.yaml" > ~/.kube/config
+Update the endpoint reference from localhost loopback to the cluster master's private VNet IP:
+
+Bash
+sed -i 's/127.0.0.1/10.0.1.5/g' ~/.kube/config
+chmod 600 ~/.kube/config
+Establish a dynamic SOCKS5 routing tunnel to bridge your control node terminal into the private Azure VNet:
+
+Bash
+ssh -i ~/.ssh/azure-lab-private-key -D 1080 -N -f ops@<APPLICATION_VM_PUBLIC_IP>
+Verify node communication by routing your query through the proxy session:
+
+Bash
+HTTPS_PROXY=socks5://127.0.0.1:1080 kubectl get nodes
+(Optional: Run export HTTPS_PROXY=socks5://127.0.0.1:1080 to keep the proxy active for your entire current terminal window).
+
+
+
 Phase 5 - Deploy Kubernetes applications
 
 Service and Deployment first, storage before the app that consumes it, Ingress last:
