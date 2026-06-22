@@ -1,160 +1,206 @@
-# gaire-lab-automation
 gaire-lab-automation
 
-Run Terraform,
-Update Public IP in 2 places inside hosts file in ansible>inventory>hosts.yml
-ansible azure_lab_vm -m ping -e "ansible_user=lab.admin"
-ansible-playbook playbooks/base-setup.yml -e "ansible_user=lab.admin"
-ansible-playbook playbooks/deploy-k3s.yml
-ansible-playbook playbooks/deploy-stack.yml
+Infrastructure-as-code automation lab: Azure cloud infrastructure, a K3s Kubernetes cluster, a Dockerised application stack, and a single HTTPS edge — all provisioned and configured with zero manual steps via Terraform and Ansible.
+
+Live endpoints:
 
 
-### 🚀 Infrastructure Reconstruction & Baseline Realignment
-* **Tear-Down & Spin-Up:** Executed `terraform destroy` followed by `terraform apply` to resolve state drift and rebuild the lab environment. Update Public IP in 2 places inside hosts file in ansible>inventory>hosts.yml
-* **IP Anchoring:** Decoupled and fixed internal private IPs (`10.0.1.5` / `10.0.1.6`) on the K3s cluster nodes via Terraform configuration to guarantee static proxy alignment. Already defined on Terraform now on main.tf
-* **Bootstrap Variable Overrides:** Utilized high-priority Ansible Extra Variables (`-e "ansible_user=lab.admin"`) to bypass default inventory configurations and establish the baseline OS environment on the fresh gateway. | ansible-playbook playbooks/base-setup.yml -e "ansible_user=lab.admin"
-* **Core Hardening & User Provisioning:** Orchestrated package upgrades, UFW firewall active matrices, and initialized the permanent `ops` user automation profile. | ansible-playbook playbooks/deploy-k3s.yml
-* **SSH Multi-Hop Tunneling:** Verified internal control plane orchestration by executing `deploy-k3s.yml` directly across the secure gateway SSH proxy tunnel.
-* **Edge Application Deployment:** Provisioned a 4GB system swap allocation and built a custom DuckDNS-enabled Caddy container on `azure_lab_vm` to reverse-proxy core services (**n8n, Portainer, Ollama, Open WebUI**). | ansible-playbook playbooks/deploy-stack.yml
+https://n8n.gairelab.duckdns.org — automation workflows
+https://chat.gairelab.duckdns.org — private AI (Open WebUI + Ollama)
+https://portainer.gairelab.duckdns.org — Docker management
+https://ollama.gairelab.duckdns.org — AI model API (basic auth)
+https://memos.gairelab.duckdns.org — Kubernetes-hosted notes app
+https://whoami.gairelab.duckdns.org — Kubernetes test app
 
 
 
+Architecture
 
-Disaster Recovery Checklist for a New Laptop
-Looking closely at your attached folder tree, your .gitignore is successfully keeping sensitive states and configurations local. If your current machine completely dies and you pull this repository down onto a brand-new laptop, the repository will intentionally be missing your structural states and keys.
+There is exactly one public entry point: Caddy, running on the application VM. Everything else — including the entire K3s cluster — is reached privately over the Azure VNet. Nothing else needs to be (or is) exposed to the internet.
 
-Here is the exact checklist of the files you will need to manually recreate or copy from your secure backups to get the lab automation engine running again:
+Internet
+   |
+   v
+gairelab.duckdns.org  (DuckDNS wildcard -> application VM's static public IP)
+   |
+   v
+Caddy  (application VM - TLS termination, cert issuance via DuckDNS DNS-01)
+   |
+   |-- n8n.gairelab.duckdns.org        -> n8n:5678          (Docker, same VM)
+   |-- chat.gairelab.duckdns.org       -> open-webui:8080    (Docker, same VM)
+   |-- portainer.gairelab.duckdns.org  -> portainer:9443     (Docker, same VM)
+   |-- ollama.gairelab.duckdns.org     -> ollama:11434       (Docker, same VM, basic auth)
+   |
+   `-- memos.gairelab.duckdns.org   --,
+       whoami.gairelab.duckdns.org  --+--> 10.0.1.5:80 (K3s master, private VNet IP)
+                                          |
+                                          v
+                                       Traefik (K3s built-in ingress)
+                                          |
+                                          v
+                                       routes by hostname -> correct Pod
 
-1. In the terraform/ Folder
-terraform.tfvars
+Why this matters for a rebuild: the K3s nodes do not need to be internet-facing at all for ingress to work — Caddy reaches the master node's private IP (10.0.1.5) over the VNet. Any public IPs / NSG rules opening ports 80 or 443 on the K3s nodes are leftover from an earlier design and are not required by this architecture (see Known limitations below).
 
-What it holds: Your live Azure subscription IDs, cloud tenant credentials, and the administrative root user passwords used to provision the baseline VMs.
+Certificate issuance — DNS-01, not HTTP-01
 
-terraform.tfstate & terraform.tfstate.backup
+Caddy's global config block uses the DuckDNS ACME plugin:
 
-What it holds: The cryptographic map tracking exactly which real Azure hardware resources belong to your configuration files.
+{
+    email you@example.com
+    acme_dns duckdns <token>
+}
 
-Note: If you don't have this file on a new laptop, running terraform apply will think nothing exists and try to build duplicate VMs, causing a crash. You either need to back this state file up securely or run terraform import for your resources.
+This means Caddy proves domain ownership to Let's Encrypt by creating a DNS TXT record directly via the DuckDNS API — Let's Encrypt never needs to reach your VM over HTTP to issue a certificate. Certificate issuance is therefore not affected by DNS propagation delay.
 
-2. In the ansible/ Folder
-ansible/playbooks/vars/secrets.yml
+What is affected by propagation: after a rebuild, your own and visitors' DNS resolvers still need to pick up the new IP for gairelab.duckdns.org before requests reach the new VM at all. With DuckDNS's short TTL this is usually seconds to a couple of minutes — but it's worth a short wait-and-retry if a fresh deploy seems unreachable immediately after terraform apply.
 
-What it holds: Your unencrypted variables like vault_duckdns_token and plaintext setup targets like your ollama_admin_password.
+Component breakdown
 
-ansible/playbooks/.kube/config
-
-What it holds: Your administrative authentication token context needed to issue remote commands down to your K3s cluster nodes using your local control utility engines.
-
-3. In Your Local Machine User Profile (~/.ssh/)
-~/.ssh/azure-lab-private-key
-
-What it holds: The private OpenSSH key pair file required to pass through the front gateway and decrypt the target authentication chains inside your automated script manifests. Without this local file, every single connection handshake will fail.
+ComponentToolLives inCloud infrastructureTerraformterraform/Server configurationAnsibleansible/playbooks/Docker stack + Caddy (incl. K3s proxy routes)Ansibleansible/playbooks/deploy-stack.ymlK3s cluster bootstrapAnsibleansible/playbooks/deploy-k3s.ymlKubernetes applicationskubectl manifestsansible/k3s-manifests/Infrastructure monitoringPythonhealth_check.pyCI pipelineGitHub Actions.github/workflows/
 
 
+What is tracked in Git vs what is not
+
+This repo is public. Nothing secret is committed. Files containing credentials, state, or keys are excluded via .gitignore and must be restored from a secure backup — see Disaster recovery below.
+
+Tracked in Git (yes)Not tracked - local only (no)terraform/*.tfterraform/terraform.tfvarsansible/playbooks/*.ymlterraform/terraform.tfstate*ansible/k3s-manifests/*.yamlansible/playbooks/vars/secrets.ymlhealth_check.pyansible/inventory/hosts.yml.github/workflows/*.yml~/.kube/config (on control node)~/.ssh/azure-lab-private-key (on control node)
+
+The Caddy to K3s reverse-proxy routes (the memos / whoami blocks shown above) are written from the Ansible template inside deploy-stack.yml, not hand-edited on the VM. Every ansible-playbook playbooks/deploy-stack.yml run regenerates /etc/caddy/Caddyfile from that template and reloads Caddy — so this part of the architecture is fully reproducible by design.
+
+
+Prerequisites
+
+
+An Azure account with an active subscription
+A Linux control node to run Ansible from (Ansible does not run natively on Windows; a free-tier GCP e2-micro works well)
+Terraform and Azure CLI installed locally where you run terraform apply (logged in via az login)
+A free DuckDNS domain and token
+An SSH key pair in RSA format generated on your control node (Azure VM login does not support ed25519)
+
+
+
+Disaster recovery checklist
+
+If your control node or laptop is wiped, restore these from your own secure backup (password manager / encrypted vault) before running anything. Git will not bring these back — that's intentional.
+
+FileLocationWhat it holdsterraform.tfvarsterraform/Azure subscription ID, VM admin credentials, your SSH public key, alert emailterraform.tfstate + .backupterraform/Terraform's map of which real Azure resources belong to your config. Without it, terraform apply will try to create duplicates.secrets.ymlansible/playbooks/vars/DuckDNS token, Ollama admin passwordhosts.ymlansible/inventory/VM IP addresses and SSH connection detailsazure-lab-private-key~/.ssh/ on control nodePrivate half of the SSH key your Azure VMs trust. Nothing connects without it.~/.kube/configcontrol nodeCredentials kubectl uses to talk to the K3s cluster
+
+
+Warning: K3s data is not backed up. Persistent storage for cluster apps (e.g. memos-pvc) uses K3s's local-path provisioner, which writes directly to the K3s worker node's local disk. Destroying that VM destroys the data with it. If an app's data matters, back it up (e.g. kubectl cp, or export from the app itself) before running terraform destroy.
 
 
 
 
+Step-by-step rebuild (from a clean Azure subscription)
+
+Follow this order - each phase depends on the one before it.
+
+Phase 1 - Provision cloud infrastructure (Terraform)
+
+Run from your local machine, not the control node.
 
 
+Restore terraform/terraform.tfvars from backup (or recreate it - see variables.tf for required fields).
+Initialise and apply:
 
-# gaire-lab-automation
-gaire-lab-automation
 
-## 🛠️ Step-by-Step Rebuild & Execution Order
-
-If you are setting up from scratch (or after a `terraform destroy`), follow this exact sequence:
-
-### Phase 1: Infrastructure Provisioning (Terraform)
-1. Navigate to your Terraform directory and deploy the core VMs and networks:
-   ```bash
-   cd terraform/
+bash   cd terraform/
    terraform init
    terraform apply
-2. IP Update: Copy the new Public IP from the Terraform output and update it in two places inside your Ansible inventory file: ansible/inventory/hosts.yml.
 
-3. cd ../ansible/
 
-# 1. Verify connection to the new VM
-ansible azure_lab_vm -m ping -e "ansible_user=lab.admin"
+Note the application VM's static public IP from the output.
 
-# 2. Hardened OS baseline & permanent 'ops' user initialization
-ansible-playbook playbooks/base-setup.yml -e "ansible_user=lab.admin"
 
-# 3. Provision K3s Cluster control plane and node infrastructure
-ansible-playbook playbooks/deploy-k3s.yml
+Phase 2 - Point Ansible at the new infrastructure
 
-# 4. Deploy gateway apps (Caddy Proxy with DuckDNS, n8n, Portainer, Ollama, Open WebUI)
-ansible-playbook playbooks/deploy-stack.yml
+Run from your control node.
 
-4. cd k3s-manifests/
 
-# 1. Deploy the 'whoami' network test applications
+Update ansible/inventory/hosts.yml with the new public IP (both places it appears). The K3s nodes' private IPs are fixed in Terraform (10.0.1.5 master / 10.0.1.6 worker) and don't change between rebuilds.
+Confirm connectivity:
+
+
+bash   cd ansible/
+   ansible azure_lab_vm -m ping
+
+Phase 3 - Configure the application VM
+
+
+Harden the OS, create the ops automation user, configure the firewall:
+
+
+bash   ansible-playbook playbooks/base-setup.yml
+
+
+Deploy the Docker stack - installs Docker, builds the DuckDNS-enabled Caddy image, writes the Caddyfile (including the K3s proxy routes), deploys n8n / Ollama / Open WebUI / Portainer, requests SSL certificates, pulls the phi3 model:
+
+
+bash   ansible-playbook playbooks/deploy-stack.yml
+
+
+Verify DNS has caught up before relying on the public hostnames (see the DNS-01 note above):
+
+
+bash   nslookup gairelab.duckdns.org
+   # should return the new IP from step 3 - if not, wait a minute and retry
+
+Phase 4 - Provision the K3s cluster
+
+
+Run base hardening against the K3s nodes:
+
+
+bash   ansible-playbook playbooks/base-setup.yml -e "target=k3s_cluster"
+
+
+Bootstrap the cluster - installs K3s server on the master, joins the worker:
+
+
+bash    ansible-playbook playbooks/deploy-k3s.yml
+
+
+Confirm both nodes are Ready:
+
+
+bash    kubectl get nodes
+
+Phase 5 - Deploy Kubernetes applications
+
+Service and Deployment first, storage before the app that consumes it, Ingress last:
+
+bashcd ansible/k3s-manifests/
+
 kubectl apply -f whoami-service.yaml
 kubectl apply -f whoami-deployment.yaml
 kubectl apply -f whoami-ingress.yaml
 
-# 2. Deploy the Persistent Volume Claim for database storage
 kubectl apply -f memos-pvc.yaml
-
-# 3. Deploy the 'memos' application (automatically consumes and binds to the PVC)
 kubectl apply -f memos-deployment.yaml
 kubectl apply -f memos-ingress.yaml
 
+Phase 6 - Verify
+
+bashkubectl get pods -A
+kubectl get ingress -A
+python3 health_check.py
+
+Then visit each endpoint listed at the top of this README and confirm it loads.
+
+
+Known limitations / possible improvements
+
+
+K3s ingress has no TLS of its own. Traffic from Caddy to the K3s master (10.0.1.5:80) is plain HTTP - acceptable here because it never leaves the private VNet, but worth knowing. Adding cert-manager + a ClusterIssuer would let the cluster issue its own certificates if it's ever exposed directly.
+Ingress is pinned to the master node only. Traefik runs on both K3s nodes (svclb-traefik is a daemonset), but Caddy only proxies to 10.0.1.5. If the master is down, memos/whoami become unreachable even though the worker's Traefik instance is healthy. Pointing Caddy at both nodes (or a load balancer in front of them) would fix this.
+K3s node public IPs / NSG rules for ports 80 and 443 are unused under the current architecture and could be removed or tightened to SSH-only (and 6443 for the K3s API) for a smaller attack surface.
 
 
 
+Tear-down
 
+bashcd terraform/
+terraform destroy
 
-
-
-🚀 Infrastructure Reconstruction & Baseline Realignment Notes
-Tear-Down & Spin-Up: Executed terraform destroy followed by terraform apply to resolve state drift and rebuild the lab environment.
-
-IP Anchoring: Decoupled and fixed internal private IPs (10.0.1.5 / 10.0.1.6) on the K3s cluster nodes via Terraform configuration to guarantee static proxy alignment. Already defined on Terraform now on main.tf.
-
-Bootstrap Variable Overrides: Utilized high-priority Ansible Extra Variables (-e "ansible_user=lab.admin") to bypass default inventory configurations and establish the baseline OS environment on the fresh gateway.
-
-Core Hardening & User Provisioning: Orchestrated package upgrades, UFW firewall active matrices, and initialized the permanent ops user automation profile via deploy-k3s.yml directly across the secure gateway SSH proxy tunnel.
-
-Automated Configuration Drift Protection: Configured a native Ansible handler for Caddy. Now, updates to subdomains inside the Write Caddyfile task automatically trigger a live container reload (caddy reload), preventing runtime service downtime.
-
-K3s Dynamic Storage Provisioning: Deployed a persistent volume claim (memos-pvc.yaml) using K3s's built-in local-path provisioner, locking down 2Gi of capacity.
-
-Stateful Application Orchestration: Deployed the Memos note-taking application container linked to the persistent volume claim. Verified data persistence across forced pod destructions (kubectl delete pod).
-
-Cloud-to-Cluster Routing Engine: Implemented modern Traefik Ingress routes (memos-ingress.yaml and whoami-ingress.yaml) pointing to their cluster services, paired with edge proxy rules in the Ansible Caddy layout to securely route external traffic from gairelab.duckdns.org subdomains directly into the internal K3s node network.
-
-💻 Disaster Recovery Checklist for a New Laptop
-Looking closely at your attached folder tree, your .gitignore is successfully keeping sensitive states and configurations local. If your current machine completely dies and you pull this repository down onto a brand-new laptop, the repository will intentionally be missing your structural states and keys.
-
-Here is the exact checklist of the files you will need to manually recreate or copy from your secure backups to get the lab automation engine running again:
-
-1. In the terraform/ Folder
-terraform.tfvars
-
-What it holds: Your live Azure subscription IDs, cloud tenant credentials, and the administrative root user passwords used to provision the baseline VMs.
-
-terraform.tfstate & terraform.tfstate.backup
-
-What it holds: The cryptographic map tracking exactly which real Azure hardware resources belong to your configuration files.
-
-Note: If you don't have this file on a new laptop, running terraform apply will think nothing exists and try to build duplicate VMs, causing a crash. You either need to back this state file up securely or run terraform import for your resources.
-
-2. In the ansible/ Folder
-ansible/vars/secrets.yml
-
-What it holds: Your unencrypted variables like vault_duckdns_token and plaintext setup targets like your hashed/plaintext passwords.
-
-ansible/playbooks/.kube/config
-
-What it holds: Your administrative authentication token context needed to issue remote commands down to your K3s cluster nodes using your local control utility engines.
-
-ansible/k3s-manifests/ Configurations
-
-What it holds: Your core Kubernetes application deployment files (memos-*.yaml and whoami-*.yaml). Unlike states/secrets, these generic application manifests are safely checked directly into your repository tracking branch.
-
-3. In Your Local Machine User Profile (~/.ssh/)
-~/.ssh/azure-lab-private-key
-
-What it holds: The private OpenSSH key pair file required to pass through the front gateway and decrypt the target authentication chains inside your automated script manifests. Without this local file, every single connection handshake will fail.
+This removes everything Terraform created from Azure. Your code, manifests, and playbooks stay in GitHub untouched - re-running Step-by-step rebuild above restores the full environment.
