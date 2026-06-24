@@ -167,7 +167,9 @@ Confirm both nodes are Ready:
 bash    kubectl get nodes
 
 
-Phase 4.5 — Sync and Proxy Cluster Credentials (The Rebuild Twist)
+Phase 4.5 — Sync and Proxy Cluster Credentials (The Rebuild Twist) | tar -cf - -C ~/gaire-lab-automation/ansible k3s-manifests | ssh -o ProxyCommand="ssh -W %h:%p -q -i ~/.ssh/azure-lab-private-key -o StrictHostKeyChecking=no ops@20.70.114.78" -i ~/.ssh/azure-lab-private-key ops@10.0.1.5 "tar -xf - -C /tmp && sudo kubectl apply -f /tmp/k3s-manifests && rm -rf /tmp/k3s-manifests"
+
+
 Because the K3s cluster lives completely isolated inside the private Azure VNet, your external control node cannot reach 10.0.1.5 directly to run cluster commands. We must fetch the credentials using a nested jump check and proxy our local kubectl traffic through an SSH SOCKS5 tunnel.
 
 Fetch the new token configuration from your control node using your local SSH key via the gateway:
